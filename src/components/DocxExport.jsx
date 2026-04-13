@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { Document, Packer, Paragraph, Table, TableRow, TableCell, VerticalAlign, WidthType, BorderStyle } from 'docx';
+import { Document, Packer, Paragraph, Table, TableRow, TableCell, VerticalAlign, WidthType } from 'docx';
 import { DownloadCloud, Loader2 } from 'lucide-react';
 
-export default function DocxExport({ excelData, mappings, baseRow }) {
+export default function DocxExport({ excelData, mappings, blocks, baseRow }) {
   const [isExporting, setIsExporting] = useState(false);
 
-  const canExport = excelData && baseRow !== null && Object.keys(mappings).length > 0;
+  const canExport = excelData && baseRow !== null && Object.keys(mappings).length > 0 && blocks.length > 0;
 
   const createCell = (text, options = {}) => {
     return new TableCell({
@@ -20,82 +20,53 @@ export default function DocxExport({ excelData, mappings, baseRow }) {
 
     try {
       const tableRows = [];
-      
-      // Header Row
-      const headerRow = new TableRow({
-        children: [
-          createCell("SR NO"),
-          createCell("TEAM TITLE"),
-          createCell("DOMAIN"),
-          createCell("PARTICIPANT NAME"),
-          createCell("PHONE NUMBER"),
-          createCell("COLLEGE"),
-          createCell("SIGN")
-        ],
-        tableHeader: true
-      });
-      tableRows.push(headerRow);
+      const maxRows = Math.max(1, ...blocks.map(b => b.type === 'multi' ? parseInt(b.rows) || 1 : 1));
 
-      // Iterate over excel rows from baseRow onwards
+      // Header Row
+      const headerChildren = blocks.flatMap(b => 
+        b.fields.map(f => createCell(f.name, { shading: { fill: "f3f4f6" } }))
+      );
+      tableRows.push(new TableRow({ children: headerChildren, tableHeader: true }));
+
+      // Iterate through dataset
       for (let r = baseRow; r < excelData.length; r++) {
         const rowData = excelData[r];
-        // Skip completely empty rows
         if (!rowData || rowData.length === 0 || rowData.every(c => !String(c).trim())) {
-          continue;
+          continue; // Skip blank rows
         }
 
-        const getValue = (key) => {
-          const colIndex = mappings[key];
-          if (colIndex === undefined) return "";
-          const val = rowData[colIndex];
-          return (val !== undefined && val !== null) ? val : "";
-        };
+        // Each valid team expands to `maxRows` output rows
+        for (let teamRow = 0; teamRow < maxRows; teamRow++) {
+          const children = [];
 
-        // Create standard styling for rowspanned cells
-        const mergedOptions = { rowSpan: 4, verticalAlign: VerticalAlign.CENTER };
+          blocks.forEach(b => {
+            b.fields.forEach(f => {
+              if (b.type === 'single') {
+                if (teamRow === 0) {
+                  const mappingId = `${b.id}_${f.id}`;
+                  const colIndex = mappings[mappingId];
+                  const val = colIndex !== undefined ? rowData[colIndex] : "";
+                  const finalVal = (val !== undefined && val !== null) ? val : "";
+                  children.push(createCell(finalVal, { rowSpan: maxRows, verticalAlign: VerticalAlign.CENTER }));
+                }
+                // Skip pushing anything for subsequent teamRows to respect rowSpan
+              } else {
+                if (teamRow < b.rows) {
+                  const mappingId = `${b.id}_${f.id}_${teamRow}`;
+                  const colIndex = mappings[mappingId];
+                  const val = colIndex !== undefined ? rowData[colIndex] : "";
+                  const finalVal = (val !== undefined && val !== null) ? val : "";
+                  children.push(createCell(finalVal));
+                } else {
+                  // Push empty cell to satisfy grid constraints for block fields exhausted before maxRows
+                  children.push(createCell(''));
+                }
+              }
+            });
+          });
 
-        // Participant 1 row (includes merged columns)
-        tableRows.push(new TableRow({
-          children: [
-            createCell(getValue('sr_no'), mergedOptions),
-            createCell(getValue('team_title'), mergedOptions),
-            createCell(getValue('domain'), mergedOptions),
-            createCell(getValue('p1_name')),
-            createCell(getValue('p1_phone')),
-            createCell(getValue('p1_college')),
-            createCell(getValue('p1_sign'))
-          ]
-        }));
-
-        // Participant 2 row (skips the first 3 merged columns)
-        tableRows.push(new TableRow({
-          children: [
-            createCell(getValue('p2_name')),
-            createCell(getValue('p2_phone')),
-            createCell(getValue('p2_college')),
-            createCell(getValue('p2_sign'))
-          ]
-        }));
-
-        // Participant 3 row (skips the first 3 merged columns)
-        tableRows.push(new TableRow({
-          children: [
-            createCell(getValue('p3_name')),
-            createCell(getValue('p3_phone')),
-            createCell(getValue('p3_college')),
-            createCell(getValue('p3_sign'))
-          ]
-        }));
-
-        // Participant 4 row (skips the first 3 merged columns)
-        tableRows.push(new TableRow({
-          children: [
-            createCell(getValue('p4_name')),
-            createCell(getValue('p4_phone')),
-            createCell(getValue('p4_college')),
-            createCell(getValue('p4_sign'))
-          ]
-        }));
+          tableRows.push(new TableRow({ children }));
+        }
       }
 
       const table = new Table({
@@ -108,6 +79,7 @@ export default function DocxExport({ excelData, mappings, baseRow }) {
 
       const doc = new Document({
         sections: [{
+          properties: {},
           children: [table],
         }],
       });
@@ -116,7 +88,7 @@ export default function DocxExport({ excelData, mappings, baseRow }) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'Generated_Word_Table.docx';
+      a.download = 'Advanced_Word_Template.docx';
       a.click();
       URL.revokeObjectURL(url);
 
@@ -131,9 +103,9 @@ export default function DocxExport({ excelData, mappings, baseRow }) {
   return (
     <div className="flex flex-col md:flex-row items-center justify-between gap-4">
       <div>
-        <h3 className="text-lg font-semibold text-gray-800">Generate Word Document</h3>
-        <p className="text-sm text-gray-500 max-w-sm">
-          Map your Excel entries first. The app will auto-fill from the selected base row to the end of the sheet, respecting your 4-row participant structure.
+        <h3 className="text-lg font-semibold text-gray-800">Generate Dynamic Word Table</h3>
+        <p className="text-sm text-gray-500 max-w-sm mt-1">
+          Compile mapped blocks directly into a `.docx` table structure. Blank rows are gracefully handled.
         </p>
       </div>
       <button
@@ -143,11 +115,11 @@ export default function DocxExport({ excelData, mappings, baseRow }) {
           flex items-center gap-2 px-6 py-3 rounded-lg font-medium text-white transition-all
           ${!canExport 
             ? 'bg-gray-300 cursor-not-allowed' 
-            : 'bg-blue-600 hover:bg-blue-700 active:bg-blue-800 shadow-md hover:shadow-lg'}
+            : 'bg-green-600 hover:bg-green-700 active:bg-green-800 shadow-md hover:shadow-lg'}
         `}
       >
         {isExporting ? <Loader2 size={20} className="animate-spin" /> : <DownloadCloud size={20} />}
-        {isExporting ? 'Generating...' : 'Generate Docx'}
+        {isExporting ? 'Generating Document...' : 'Generate Docx'}
       </button>
     </div>
   );
