@@ -1,11 +1,14 @@
 import React, { useState } from 'react';
 import { Document, Packer, Paragraph, Table, TableRow, TableCell, VerticalAlign, WidthType } from 'docx';
 import { DownloadCloud, Loader2 } from 'lucide-react';
+import { generateTableStructure } from '../utils/exportUtils';
 
-export default function DocxExport({ excelData, mappings, blocks, baseRow }) {
+export default function DocxExport({ excelData, mappings, blocks, baseRow, isDynamicRows }) {
   const [isExporting, setIsExporting] = useState(false);
 
-  const canExport = excelData && baseRow !== null && Object.keys(mappings).length > 0 && blocks.length > 0;
+  // Derive logical data rows using shared architecture
+  const { headers, rows } = generateTableStructure({ excelData, mappings, blocks, baseRow, isDynamicRows });
+  const canExport = rows.length > 0;
 
   const createCell = (text, options = {}) => {
     return new TableCell({
@@ -20,54 +23,26 @@ export default function DocxExport({ excelData, mappings, blocks, baseRow }) {
 
     try {
       const tableRows = [];
-      const maxRows = Math.max(1, ...blocks.map(b => b.type === 'multi' ? parseInt(b.rows) || 1 : 1));
 
       // Header Row
-      const headerChildren = blocks.flatMap(b => 
-        b.fields.map(f => createCell(f.name, { shading: { fill: "f3f4f6" } }))
-      );
+      const headerChildren = headers.map(h => createCell(h, { shading: { fill: "f3f4f6" } }));
       tableRows.push(new TableRow({ children: headerChildren, tableHeader: true }));
 
-      // Iterate through dataset
-      for (let r = baseRow; r < excelData.length; r++) {
-        const rowData = excelData[r];
-        if (!rowData || rowData.length === 0 || rowData.every(c => !String(c).trim())) {
-          continue; // Skip blank rows
-        }
-
-        // Each valid team expands to `maxRows` output rows
-        for (let teamRow = 0; teamRow < maxRows; teamRow++) {
-          const children = [];
-
-          blocks.forEach(b => {
-            b.fields.forEach(f => {
-              if (b.type === 'single') {
-                if (teamRow === 0) {
-                  const mappingId = `${b.id}_${f.id}`;
-                  const colIndex = mappings[mappingId];
-                  const val = colIndex !== undefined ? rowData[colIndex] : "";
-                  const finalVal = (val !== undefined && val !== null) ? val : "";
-                  children.push(createCell(finalVal, { rowSpan: maxRows, verticalAlign: VerticalAlign.CENTER }));
-                }
-                // Skip pushing anything for subsequent teamRows to respect rowSpan
-              } else {
-                if (teamRow < b.rows) {
-                  const mappingId = `${b.id}_${f.id}_${teamRow}`;
-                  const colIndex = mappings[mappingId];
-                  const val = colIndex !== undefined ? rowData[colIndex] : "";
-                  const finalVal = (val !== undefined && val !== null) ? val : "";
-                  children.push(createCell(finalVal));
-                } else {
-                  // Push empty cell to satisfy grid constraints for block fields exhausted before maxRows
-                  children.push(createCell(''));
-                }
-              }
-            });
-          });
-
-          tableRows.push(new TableRow({ children }));
-        }
-      }
+      // Map rows purely from shared structure state
+      rows.forEach(r => {
+        const children = [];
+        r.forEach(cellObj => {
+          if (!cellObj.isSkip) {
+             const options = {};
+             if (cellObj.rowSpan > 1) {
+               options.rowSpan = cellObj.rowSpan;
+               options.verticalAlign = VerticalAlign.CENTER;
+             }
+             children.push(createCell(cellObj.text, options));
+          }
+        });
+        tableRows.push(new TableRow({ children }));
+      });
 
       const table = new Table({
         rows: tableRows,
@@ -105,7 +80,7 @@ export default function DocxExport({ excelData, mappings, blocks, baseRow }) {
       <div>
         <h3 className="text-lg font-semibold text-gray-800">Generate Dynamic Word Table</h3>
         <p className="text-sm text-gray-500 max-w-sm mt-1">
-          Compile mapped blocks directly into a `.docx` table structure. Blank rows are gracefully handled.
+          Compile mapped blocks directly into a `.docx` table structure. Config changes automatically pipe to the algorithm.
         </p>
       </div>
       <button
